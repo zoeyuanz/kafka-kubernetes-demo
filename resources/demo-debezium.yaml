@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: debezium
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: debezium
+  template:
+    metadata:
+      labels:
+        app: debezium
+    spec:
+      initContainers:
+      - name: download-otel-agent
+        image: busybox
+        command: ["/bin/sh", "-c"]
+        args:
+          - wget -O /otel/otel-agent.jar https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/download/v2.2.0/opentelemetry-javaagent.jar;
+        volumeMounts:
+        - name: otel-agent
+          mountPath: /otel
+      containers:
+      - name: debezium
+        image: quay.io/debezium/connect:2.2
+        resources:
+          requests:
+          limits:
+            memory: "100Mi"
+        env:
+        - name: BOOTSTRAP_SERVERS
+          value: "kafka-service:9092"
+        - name: GROUP_ID
+          value: "1"
+        - name: CONFIG_STORAGE_TOPIC
+          value: "connect_configs"
+        - name: OFFSET_STORAGE_TOPIC
+          value: "connect_offsets"
+        - name: KAFKA_OPTS
+          value: "-javaagent:/otel/otel-agent.jar -Dotel.resource.attributes=service.name=debezium-connector -Dotel.traces.exporter=zipkin -Dotel.exporter.zipkin.endpoint=http://zipkin.default.svc.cluster.local:9411/api/v2/spans"
+        ports:
+        - containerPort: 8083
+        volumeMounts:
+        - name: otel-agent
+          mountPath: /otel
+      volumes:
+      - name: otel-agent
+        emptyDir: {}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: debezium
+spec:
+  ports:
+  - port: 8083
+  selector:
+    app: debezium
